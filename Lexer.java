@@ -1,102 +1,189 @@
 import java.util.Scanner;
+import java.util.function.Function;
 
-/*
- * 文字列から数値を読み取るプログラム
- *   0                           -> 整数 (例: 0)
- *   [1-9][0-9]*                 -> 整数 (例: 100)
- *   0[xX][0-9a-fA-F]+           -> 整数 (例: 0xabc)
- *   [0-9]*[a-fA-F][0-9a-fA-F]*  -> 整数 (例: 0123456789a)
- *   [1-9][0-9]*\.[0-9]*         -> 小数 (例: 10.3)
- *   0\.[0-9]*                   -> 小数 (例: 0.12)
- *   \.[0-9]+                    -> 小数 (例: .12)
- */
-
+// 字句解析器本体
 public class Lexer {
-	static class Token {
-		static final String TYPE_INT = "INT";
-		static final String TYPE_DEC = "DEC";
-		static final String TYPE_ERR = "ERR";
-		
-		Token(String tokenType, int start, int len) {
-			this.tokenType = tokenType;
-			this.start = start;
-			this.len = len;
-		}
-		
-		String tokenType;  /* トークンの種類 */
-		int start;         /* 文字列中のトークン開始位置 */
-		int len;           /* トークンの長さ */
-	}
-	
-	static final int CT_P = 0;
-	static final int CT_X = 1;
-	static final int CT_0 = 2;
-	static final int CT_1 = 3;
-	static final int CT_A = 4;
-	static final int CT_OTHER = 5;
+    String inputString;
+    State[] states = new State[8];
+    String resultString;
 
-	/*
-	 * 文字を分類する
-	 *   [1-9] や [a-f] をまとめて扱えるようにするため．
-	 */
-	static int getCharType(int c) {
-		if (c == '.')             return CT_P;
-		if (c == 'x' || c == 'X') return CT_X;
-		if (c == '0')             return CT_0;
-		if ('1' <= c && c <= '9') return CT_1;
-		if ('a' <= c && c <= 'f') return CT_A;
-		if ('A' <= c && c <= 'F') return CT_A;
-		return CT_OTHER;
-	}
-	
-	int[][] delta = {
-		/* TODO */
-		/* 状態遷移表を作る */
-		/*   delta[現状態][入力記号] */
+    protected enum StateType {
+        Accept_INT10,
+        Accept_INT16,
+        Accept_DEC,
+        Error
+    }
 
-		/*  P  X  0  1  A  OTHER */
-		/*{ ?, ?, ?, ?, ?, ?}, /* 状態0 */
-		/*{ ?, ?, ?, ?, ?, ?}, /* 状態1 */
-		/*...*/
-	};
+    // 状態クラス
+    class State {
+        int stateId;
+        StateType stateType;
+        // 次の文字を受け取り次の状態を返す関数を入れる
+        Function<Character, State> nextState;
 
-	/*
-	 * 文字列 str の start 文字目から字句解析しトークンを一つ返す
-	 */
-	Token getToken(String str, int start) {
-		/* 現在注目している文字 (先頭から p 文字目)  */
-		int p = start;
+        State(int id, StateType type) {
+            stateId = id;
+            stateType = type;
+        }
 
-		/* 最後の受理状態のマーカとその時何文字目まで読んだか */
-		String acceptMarker = Token.TYPE_ERR;
-		int acceptPos = start;
+        void setNextState(Function<Character, State> next) {
+            this.nextState = next;
+        }
+    }
 
-		/* 現在の状態 */
-		int currentState = 0;
+    public Lexer(String inputString) {
+        this.inputString = inputString;
 
-		while (p < str.length()) {
-			int c = str.charAt(p); /* str の p 文字目を読み取る */
-			p++;
-			
-			int ct = getCharType(c);
-			int nextState = delta[currentState][ct];
+        // 必要な状態を作成し，状態ID，タイプを設定
+        states[0] = new State(0, StateType.Error);
+        states[1] = new State(1, StateType.Accept_INT10);
+        states[2] = new State(2, StateType.Error);
+        states[3] = new State(3, StateType.Error);
+        states[4] = new State(4, StateType.Accept_INT16);
+        states[5] = new State(5, StateType.Accept_INT10);
+        states[6] = new State(6, StateType.Error);
+        states[7] = new State(7, StateType.Accept_DEC);
 
-			/* TODO */
-			/* 行先がなければループを抜ける */
-			/* 行先が受理状態であれば「最後の受理状態」を更新する */
+        // 遷移先を決定していく
+        states[0].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if (inputChar == '0') {
+                return states[1];
+            } else if ('1' <= inputChar && inputChar <= '9') {
+                return states[5];
+            } else if (inputChar == '.') {
+                return states[6];
+            } else if ('a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[1].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if (inputChar == 'x') {
+                return states[3];
+            } else if (inputChar == '.') {
+                return states[7];
+            } else if ('1' <= inputChar && inputChar <= '9') {
+                return states[2];
+            } else if ('a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[2].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if ('0' <= inputChar && inputChar <= '9') {
+                return states[2];
+            } else if ('a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[3].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if ('0' <= inputChar && inputChar <= '9' ||
+                    'a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[4].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if ('0' <= inputChar && inputChar <= '9' ||
+                    'a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[5].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if (inputChar == '.') {
+                return states[7];
+            } else if ('0' <= inputChar && inputChar <= '9') {
+                return states[5];
+            } else if ('a' <= inputChar && inputChar <= 'f' ||
+                    'A' <= inputChar && inputChar <= 'F') {
+                return states[4];
+            } else {
+                return null;
+            }
+        });
+        states[6].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if ('0' <= inputChar && inputChar <= '9') {
+                return states[7];
+            } else {
+                return null;
+            }
+        });
+        states[7].setNextState((i) -> {
+            char inputChar = i.charValue();
+            if ('0' <= inputChar && inputChar <= '9') {
+                return states[7];
+            } else {
+                return null;
+            }
+        });
+    }
 
-			currentState = nextState;
-		}
-		
-		return new Token(acceptMarker, start, acceptPos - start);
-	}
+    public StateType getToken() {
+        State result = _getToken(0, states[0]);
+        return result.stateType;
+    }
+
+    private State _getToken(int currentIndex, State currentState) {
+        if (currentIndex == inputString.length()) {
+            resultString = inputString;
+            return currentState;
+        }
+
+        State nextState = currentState.nextState.apply(inputString.charAt(currentIndex));
+        // 遷移先がない場合
+        if (nextState == null) {
+            resultString = inputString.substring(0, currentIndex);
+            return currentState;
+        }
+
+        State result = _getToken(currentIndex+1, nextState);
+        // 遷移先がエラーだった場合は現在の状態を返す
+        if (result.stateType == StateType.Error) {
+            resultString = inputString.substring(0, currentIndex);
+            return currentState;
+        } else {
+            return result;
+        }
+    }
+
+    public String getResultString() {
+        return resultString;
+    }
 	
 	public static void main(String[] args) {
 		Scanner sc = new Scanner(System.in);
 		String str = sc.nextLine();  /* 1行読み取る */
-		Lexer lex = new Lexer();
-		Token t = lex.getToken(str, 0);
-		System.out.print(t.tokenType);
-		System.out.println(str.substring(t.start, t.start + t.len));
-	}
+		Lexer lex = new Lexer(str);
+        StateType result;
+
+        result = lex.getToken();
+
+        if (result == StateType.Accept_INT10 |
+                result == StateType.Accept_INT16) {
+                System.out.println("INT" + lex.getResultString());
+        } else if (result == StateType.Accept_DEC) {
+                System.out.println("DEC" + lex.getResultString());
+        } else {
+                System.out.println("ERR");
+        }
+    }
 }
